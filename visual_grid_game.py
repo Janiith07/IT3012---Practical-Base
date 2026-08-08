@@ -1,7 +1,7 @@
 # visual_grid_game.py
 import random
 import tkinter as tk
-
+from agent import SimpleReflexAgent, ModelBasedAgent
 
 class VisualGridHuntGame:  # manages the environment logic.
     """A flexible Pacman-style grid environment with support for configurable opponents and larger scales."""
@@ -14,6 +14,8 @@ class VisualGridHuntGame:  # manages the environment logic.
 
         self.agent_pos = [0, 0]  # Agent starts at the bottom-left corner (x=0, y=0).
 
+        self.facing = 'Right' # Agent initially faces Right.
+
         if custom_walls is not None:  # If custom walls are provided, use them.
             self.walls = set(custom_walls)
         else:
@@ -22,7 +24,7 @@ class VisualGridHuntGame:  # manages the environment logic.
 
 
         # -----------------------------
-        # Generate Food
+        # Generate Food 
         # -----------------------------
 
         self.food_positions = set() # Create an empty set to store food locations.
@@ -33,10 +35,10 @@ class VisualGridHuntGame:  # manages the environment logic.
             fx = random.randint(0, self.width - 1)
             fy = random.randint(0, self.height - 1)
             
-            pos_tuple = (fx, fy) # Store the position as a tuple.
+            food_pos = (fx, fy) # Store the position as a tuple.
 
-            if pos_tuple != (0, 0) and pos_tuple not in self.walls: # Food cannot be placed: At the agent's starting position and Inside a wall.
-                self.food_positions.add(pos_tuple) # Add the food position.
+            if food_pos != (0, 0) and food_pos not in self.walls: # Food cannot be placed: At the agent's starting position and Inside a wall.
+                self.food_positions.add(food_pos) # Add the food position.
 
         # -----------------------------
         # Generate Toxic Traps
@@ -55,8 +57,7 @@ class VisualGridHuntGame:  # manages the environment logic.
             tx = random.randint(0, self.width - 1)
             ty = random.randint(0, self.height - 1)
 
-            trap_pos = (tx, ty) # Store trap position.
-
+            trap_pos = (tx, ty) # Store trap position.                       
             
             if trap_pos != (0, 0) and trap_pos not in self.walls and trap_pos not in self.food_positions: # Trap cannot be: Agent starting position, Wall, Food
                 self.toxic_traps.add(trap_pos) # Add the trap position.
@@ -64,9 +65,8 @@ class VisualGridHuntGame:  # manages the environment logic.
         # -----------------------------
         # Generate Opponents
         # -----------------------------
-
+                                 
         self.opponents = [] # Create an empty list to store opponents.
-
         while len(self.opponents) < num_opponents: # Keep generating opponents until the required number is reached.
 
             # Generate random x,y coordinates.
@@ -75,7 +75,7 @@ class VisualGridHuntGame:  # manages the environment logic.
 
             op_pos = [ox, oy] # Store opponent position.
 
-            if tuple(op_pos) != (0, 0) and tuple(op_pos) not in self.walls and tuple(op_pos) not in self.food_positions:
+            if tuple(op_pos) != (0, 0) and tuple(op_pos) not in self.walls and tuple(op_pos) not in self.food_positions and tuple(op_pos) not in self.toxic_traps:
             # Opponent cannot start:On the agent, Inside a wall, On a food location.
                 self.opponents.append(op_pos) # Add the opponent.
 
@@ -87,67 +87,111 @@ class VisualGridHuntGame:  # manages the environment logic.
         self.steps = 0 # Number of actions performed.
         self.collision = False # No collision at the beginning.
 
-    def get_percept(self) -> dict: # Sensors
-        
-        # Returns everything the agent can currently observe.
-        # This represents the Sensors (S) in the PEAS framework.
-    
+    def get_cell_ahead(self):
+        """Returns the coordinate tuple of the cell directly in front of the agent, based on its current facing direction.
+        This is used so the agent can sense locally instead of seeing the whole grid (Lab 02 Step 1.1)."""
+
+        x, y = self.agent_pos
+        if self.facing == 'Up':
+            y = min(self.height - 1, y + 1)
+        elif self.facing == 'Down':
+            y = max(0, y - 1)
+        elif self.facing == 'Left':
+            x = max(0, x - 1)
+        elif self.facing == 'Right':
+            x = min(self.width - 1, x + 1)
+
+        return (x, y)
+
+    def get_percept(self) -> dict:
+        """
+        Returns only local information available to the agent.
+
+        The agent does not receive its global coordinates.
+        """
+
+        ahead = self.get_cell_ahead()
+
+        # A cell at the boundary is also treated as blocked.
+        at_boundary = (
+            (self.facing == 'Up' and self.agent_pos[1] == self.height - 1)
+            or
+            (self.facing == 'Down' and self.agent_pos[1] == 0)
+            or
+            (self.facing == 'Left' and self.agent_pos[0] == 0)
+            or
+            (self.facing == 'Right' and self.agent_pos[0] == self.width - 1)
+        )
+
         return {
-            'agent_pos': list(self.agent_pos), # Current position of the agent.
-            'opponent_positions': [list(op) for op in self.opponents], # Positions of all opponents.
-            'smells_food': tuple(self.agent_pos) in self.food_positions, # Check if the agent is currently standing on food.
-            'smells_toxin': tuple(self.agent_pos) in self.toxic_traps, # Check if the agent is currently standing on a toxic trap.
-            'hit_wall': tuple(self.agent_pos) in self.walls, # Check if the agent is currently on a wall.
-            'collision': self.collision, # Whether the agent collided with an opponent.
-            'score': self.score, # Current performance score.
-            'remaining_food': len(self.food_positions) # Number of food items remaining.
+            'wall_ahead': (
+                ahead in self.walls
+                or at_boundary
+            ),
+
+            'food_here': (
+                tuple(self.agent_pos)
+                in self.food_positions
+            ),
+
+            'toxin_here': (
+                tuple(self.agent_pos)
+                in self.toxic_traps
+            ),
+
+            'collision': self.collision,
+
+            'score': self.score,
+
+            'remaining_food': len(self.food_positions)
         }
 
     def execute_action(self, action: str): # Actuators
     
         # Executes the action chosen by the agent.
         # This represents the Actuators (A) in the PEAS framework.
-        
+        # Lab 02: actions are now 'turn_left', 'turn_right', 'move_forward' instead of raw Up/Down/Left/Right,
+        # since the agent now reasons in terms of its own facing direction.
+
         self.steps += 1 # Increase the number of steps taken.
-        new_pos = list(self.agent_pos) # Copy the current position before moving.
 
         # -----------------------------
         # Agent Movement
         # -----------------------------
 
-        if action == 'Up':  # Move Up (increase y-coordinate).
-            new_pos[1] = min(self.height - 1, new_pos[1] + 1)
-        elif action == 'Down': # Move Down (decrease y-coordinate).
-            new_pos[1] = max(0, new_pos[1] - 1)
-        elif action == 'Left': # Move Left (decrease x-coordinate).
-            new_pos[0] = max(0, new_pos[0] - 1)
-        elif action == 'Right': # Move Right (increase x-coordinate).
-            new_pos[0] = min(self.width - 1, new_pos[0] + 1)
+        if action == 'turn_left':
+            # Rotates facing direction 90 degrees counter-clockwise.
+            order = ['Right', 'Up', 'Left', 'Down']
+            self.facing = order[(order.index(self.facing) + 1) % 4]
 
-            # Coordinate reference:
-            # new_pos[0]  → x-coordinate 
-            # new_pos[1]  → y-coordinate
+        elif action == 'turn_right':
+            # Rotates facing direction 90 degrees clockwise.
+            order = ['Right', 'Down', 'Left', 'Up']
+            self.facing = order[(order.index(self.facing) + 1) % 4]
 
-        if tuple(new_pos) in self.walls: # If the new position is a wall, reduce the score and keep the agent in the same place.
-            self.score -= 5
-        else:
-            self.agent_pos = new_pos # Otherwise move the agent.
+        elif action == 'move_forward':
+            new_pos = list(self.get_cell_ahead())
+
+            if tuple(new_pos) in self.walls: # If the new position is a wall, reduce the score and keep the agent in the same place.
+                self.score -= 5
+            else:
+                self.agent_pos = new_pos # Otherwise move the agent.
 
         # -----------------------------
         # Food Collection
         # -----------------------------
 
-        tuple_pos = tuple(self.agent_pos) # Convert the agent position to a tuple because food positions are stored as tuples.
+        current_pos = tuple(self.agent_pos) # Convert the agent position to a tuple because food positions are stored as tuples.
 
-        if tuple_pos in self.food_positions: # Check whether food exists at the current position.
-            self.food_positions.remove(tuple_pos) # Remove the collected food.
+        if current_pos in self.food_positions: # Check whether food exists at the current position.
+            self.food_positions.remove(current_pos) # Remove the collected food.
             self.score += 20  # Reward the agent.
 
         # -----------------------------
         # Toxic Trap Penalty
         # -----------------------------
 
-        if tuple_pos in self.toxic_traps: # Check whether the agent is on a toxic trap.
+        if current_pos in self.toxic_traps: # Check whether the agent is on a toxic trap.
             self.score -= 15 # Penalize the agent.
 
         # -----------------------------
@@ -179,15 +223,24 @@ class VisualGridHuntGame:  # manages the environment logic.
     # End the game if: All food has been collected, or The agent has taken 60 steps, or A collision has occurred.
 
 
+
 class GridGameGUI: # creates the visual interface.
     """Tkinter wrapper that dynamically scales cell sizes to keep larger grids on screen."""
 
-    def __init__(self, root, width=10, height=10, num_food=12, num_opponents=2, walls=None): # These are only default values. After user assign values these values are replaced.
+    def __init__(self, root, width=10, height=10, num_food=12, num_opponents=2, walls=None, agent_type="model"):
+        # agent_type: "simple" -> SimpleReflexAgent (Lab 02 Step 1.2, will get stuck in loops)
+        #             "model"  -> ModelBasedAgent (Lab 02 Step 1.3, escapes loops using memory)
         self.root = root # Stores the main window.
         self.root.title("IT3012 - Scalable Multi-Agent Grid Hunt")
 
         self.env = VisualGridHuntGame(width=width, height=height, num_food=num_food, num_opponents=num_opponents,
                                       custom_walls=walls)
+
+        # Instantiate the chosen agent architecture.
+        if agent_type == "simple":
+            self.agent = SimpleReflexAgent()
+        else:
+            self.agent = ModelBasedAgent()
 
         # Dynamically calculate cell size so the total canvas fits nicely within a 600x600 window ceiling
         max_canvas_dim = 600
@@ -261,9 +314,11 @@ class GridGameGUI: # creates the visual interface.
         self.btn.config(state="disabled")
 
         def step():
+            
             if not self.env.is_done():
-                action = random.choice(['Up', 'Down', 'Left', 'Right'])
-                self.env.execute_action(action)  # Sends the selected action to the environment.
+                percept = self.env.get_percept()          # Agent senses the environment (Lab 02: local booleans only).
+                action = self.agent.sense_and_act(percept) # Agent decides an action using its own architecture.
+                self.env.execute_action(action)             # Sends the selected action to the environment.
 
                 self.draw_grid() # Updates the GUI to show the new positions.
                 self.label.config(text=f"Score: {self.env.score} | Steps: {self.env.steps} | Action: {action}")
@@ -276,8 +331,10 @@ class GridGameGUI: # creates the visual interface.
         step() # Starts the simulation.
 
 
+
 if __name__ == "__main__":
     root = tk.Tk() # Creates the main GUI window.
-    # Try a larger grid size like 12x12 with 15 food and 3 opponents!
-    app = GridGameGUI(root, width=12, height=12, num_food=15, num_opponents=0) # num_opponents=0 this specific execution is actually Single-Agent, not Multi-Agent.
+    # Set agent_type="simple" first to observe the SimpleReflexAgent get stuck in a loop (Lab 02 Step 1.2),
+    # then switch to agent_type="model" to see the ModelBasedAgent escape using memory (Lab 02 Step 1.3).
+    app = GridGameGUI(root, width=12, height=12, num_food=15, num_opponents=0, agent_type="model")
     root.mainloop()
