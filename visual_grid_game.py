@@ -330,5 +330,5 @@ if __name__ == "__main__":
     root = tk.Tk() # Creates the main GUI window.
     # Set agent_type="simple" first to observe the SimpleReflexAgent get stuck in a loop (Lab 02 Step 1.2),
     # then switch to agent_type="model" to see the ModelBasedAgent escape using memory (Lab 02 Step 1.3).
-    app = GridGameGUI(root, width=10, height=10, num_food=10, num_opponents=0, agent_type="BFS")
+    app = GridGameGUI(root, width=10, height=10, num_food=10, num_opponents=0, agent_type="AStar")
     root.mainloop()

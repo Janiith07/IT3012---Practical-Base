@@ -1,16 +1,17 @@
 # agent.py
+import math
 import random
 from collections import deque  # special queue. used here for BFS. BFS needs a FIFO queue.
 import heapq  # Used for UCS. heapq gives us a priority queue, where the lowest-cost item comes first.
 
 
 class SearchAgent:
-    """Lab 03: A Goal-Based/Planning Agent. Uses BFS/DFS/UCS to compute a full path
+    """Lab 03/04: A Goal-Based/Planning Agent. Uses BFS/DFS/UCS/A* to compute a full path
     to the nearest food pellet before acting, instead of reacting one step at a time."""
 
     def __init__(self):  # This runs automatically when we create a SearchAgent
         self.plan = [] # Stores the agent's current plan.
-        self.active_algo = 'BFS'  # Change to 'DFS' or 'UCS' to compare strategies.
+        self.active_algo = 'BFS'  # Change to 'DFS', 'UCS', or 'AStar' to compare strategies.
 
         # Internal dead-reckoning state (same technique as ModelBasedAgent), needed
         # because get_percept() never reveals the agent's absolute position.
@@ -121,6 +122,52 @@ class SearchAgent:
                     heapq.heappush(frontier, (new_cost, counter, npos, path + [action]))
         return None
 
+    # --- Lab 04: heuristic functions for A* ---
+    def manhattan_distance(self, pos, goal):
+        """h(n) = |x1-x2| + |y1-y2| -- exact minimum cost on a 4-way movement grid."""
+        x1, y1 = pos
+        x2, y2 = goal
+        return abs(x1 - x2) + abs(y1 - y2)
+
+    def euclidean_distance(self, pos, goal):
+        """h(n) = sqrt((x1-x2)^2 + (y1-y2)^2) -- straight-line distance."""
+        x1, y1 = pos
+        x2, y2 = goal
+        return math.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2)
+
+    # --- A*: priority queue ordered by f(n) = g(n) + h(n); optimal AND explores far fewer nodes than UCS ---
+    def astar_search(self, start_pos, goal_pos, walls, grid_size, heuristic_type='manhattan'):
+        """A* Search. Uses the heuristic to prioritize nodes that look closer to the goal,
+        drastically reducing the number of explored nodes compared to BFS/UCS."""
+        walls = set(walls)
+        heuristic = self.manhattan_distance if heuristic_type == 'manhattan' else self.euclidean_distance
+
+        g_start = 0
+        h_start = heuristic(start_pos, goal_pos)
+        f_start = g_start + h_start
+
+        frontier = [(f_start, g_start, start_pos, [])]
+        reached_states = {}
+
+        while frontier:
+            f_cost, g_cost, current_pos, path_taken = heapq.heappop(frontier)
+
+            if current_pos == goal_pos:
+                return path_taken
+
+            if current_pos in reached_states and reached_states[current_pos] <= g_cost:
+                continue  # already found an equal-or-better path to this node
+            reached_states[current_pos] = g_cost
+
+            for action, npos in self.get_neighbors(current_pos, walls, grid_size):
+                g_new = g_cost + 1
+                if npos not in reached_states or g_new < reached_states[npos]:
+                    h_new = heuristic(npos, goal_pos)
+                    f_new = g_new + h_new
+                    heapq.heappush(frontier, (f_new, g_new, npos, path_taken + [action]))
+
+        return None  # no path exists
+
     # --- bridge: convert an abstract Up/Down/Left/Right path into the environment's
     # actual turn_left/turn_right/move_forward actuator commands ---
     def convert_path_to_commands(self, path):
@@ -162,6 +209,8 @@ class SearchAgent:
                 path = self.bfs_search(self.position, target, walls, grid_size)
             elif self.active_algo == 'DFS':
                 path = self.dfs_search(self.position, target, walls, grid_size)
+            elif self.active_algo == 'AStar':
+                path = self.astar_search(self.position, target, walls, grid_size, heuristic_type='manhattan')
             else:
                 path = self.ucs_search(self.position, target, walls, grid_size)
 
@@ -493,3 +542,9 @@ class ModelBasedAgent:
         self.previous_percept = percept.copy()
 
         return action
+
+
+if __name__ == "__main__":
+    sa = SearchAgent()
+    print("Manhattan distance (0,0) -> (3,4):", sa.manhattan_distance((0, 0), (3, 4)))
+    print("Euclidean distance (0,0) -> (3,4):", sa.euclidean_distance((0, 0), (3, 4)))
