@@ -1,7 +1,7 @@
 # visual_grid_game.py
 import random
 import tkinter as tk
-from agent import SimpleReflexAgent, ModelBasedAgent
+from agent import SimpleReflexAgent, ModelBasedAgent, SearchAgent
 
 class VisualGridHuntGame:  # manages the environment logic.
     """A flexible Pacman-style grid environment with support for configurable opponents and larger scales."""
@@ -124,26 +124,17 @@ class VisualGridHuntGame:  # manages the environment logic.
         )
 
         return {
-            'wall_ahead': (
-                ahead in self.walls
-                or at_boundary
-            ),
-
-            'food_here': (
-                tuple(self.agent_pos)
-                in self.food_positions
-            ),
-
-            'toxin_here': (
-                tuple(self.agent_pos)
-                in self.toxic_traps
-            ),
-
+            'wall_ahead': (ahead in self.walls) or at_boundary,
+            'food_here': tuple(self.agent_pos) in self.food_positions,
+            'toxin_here': tuple(self.agent_pos) in self.toxic_traps,
             'collision': self.collision,
-
             'score': self.score,
+            'remaining_food': len(self.food_positions),
 
-            'remaining_food': len(self.food_positions)
+            # Lab 03 Step 1.1: expose the world model for search algorithms.
+            'grid_size': (self.width, self.height),
+            'walls': list(self.walls),
+            'all_food': list(self.food_positions)
         }
 
     def execute_action(self, action: str): # Actuators
@@ -239,8 +230,11 @@ class GridGameGUI: # creates the visual interface.
         # Instantiate the chosen agent architecture.
         if agent_type == "simple":
             self.agent = SimpleReflexAgent()
-        else:
+        elif agent_type == "model":
             self.agent = ModelBasedAgent()
+        else:
+            self.agent = SearchAgent()
+            self.agent.active_algo = agent_type  # pass 'BFS', 'DFS', or 'UCS' directly
 
         # Dynamically calculate cell size so the total canvas fits nicely within a 600x600 window ceiling
         max_canvas_dim = 600
@@ -336,5 +330,5 @@ if __name__ == "__main__":
     root = tk.Tk() # Creates the main GUI window.
     # Set agent_type="simple" first to observe the SimpleReflexAgent get stuck in a loop (Lab 02 Step 1.2),
     # then switch to agent_type="model" to see the ModelBasedAgent escape using memory (Lab 02 Step 1.3).
-    app = GridGameGUI(root, width=12, height=12, num_food=15, num_opponents=0, agent_type="model")
+    app = GridGameGUI(root, width=10, height=10, num_food=10, num_opponents=0, agent_type="BFS")
     root.mainloop()

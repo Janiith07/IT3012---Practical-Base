@@ -1,5 +1,176 @@
 # agent.py
 import random
+from collections import deque  # special queue. used here for BFS. BFS needs a FIFO queue.
+import heapq  # Used for UCS. heapq gives us a priority queue, where the lowest-cost item comes first.
+
+
+class SearchAgent:
+    """Lab 03: A Goal-Based/Planning Agent. Uses BFS/DFS/UCS to compute a full path
+    to the nearest food pellet before acting, instead of reacting one step at a time."""
+
+    def __init__(self):  # This runs automatically when we create a SearchAgent
+        self.plan = [] # Stores the agent's current plan.
+        self.active_algo = 'BFS'  # Change to 'DFS' or 'UCS' to compare strategies.
+
+        # Internal dead-reckoning state (same technique as ModelBasedAgent), needed
+        # because get_percept() never reveals the agent's absolute position.
+        self.position = (0, 0) # Stores the agent's estimated position.
+        self.facing = 'Right' # Stores which direction the agent is facing.
+        self.last_action = None # Stores the previous action.
+        self.previous_percept = None # Stores the previous information received from the environment.
+
+    # --- internal facing helpers (mirrors the environment's own turn logic) ---
+    def turn_left(self): # Defines a function for turning left.
+        order = ['Right', 'Up', 'Left', 'Down'] # defines the direction order when turning left:
+        self.facing = order[(order.index(self.facing) + 1) % 4] # finds the current direction and changes it to the next direction.
+
+    def turn_right(self): # Defines a function for turning right.
+        order = ['Right', 'Down', 'Left', 'Up']
+        self.facing = order[(order.index(self.facing) + 1) % 4]
+
+    def get_next_position(self, position=None, facing=None): # Calculates where the agent would move if it moves forward.
+        if position is None:
+            position = self.position # If no position is provided, use the agent's current position.
+        if facing is None:
+            facing = self.facing # If no direction is provided, use the agent's current direction.
+        x, y = position # Separates the position into x and y.
+        if facing == 'Up':  # Moving Up increases y.
+            return (x, y + 1)
+        elif facing == 'Down':
+            return (x, y - 1)
+        elif facing == 'Left':
+            return (x - 1, y) # Moving Left decreases x.
+        else:
+            return (x + 1, y)
+
+    def update_internal_state(self): # Updates the agent's estimated position and direction.
+        """Updates estimated position/facing using the previous action + previous percept."""
+        if self.last_action is None:
+            return # If there was no previous action, do nothing.
+        if self.last_action == 'turn_left':
+            self.turn_left() # Update the agent's direction.
+        elif self.last_action == 'turn_right':
+            self.turn_right()
+        elif self.last_action == 'move_forward': # agent tried to move forward.
+            if self.previous_percept is not None and not self.previous_percept['wall_ahead']: # Do we have previous sensor information? Was there no wall ahead?
+                self.position = self.get_next_position() # Update the position.
+
+    # --- graph expansion for the search algorithms ---
+    def get_neighbors(self, pos, walls, grid_size): # Finds all possible positions the agent can move to from a given position.
+        x, y = pos # Gets the current x and y.
+        width, height = grid_size # Gets the grid dimensions.
+        candidates = [
+            ('Up', (x, y + 1)),
+            ('Down', (x, y - 1)),
+            ('Left', (x - 1, y)),
+            ('Right', (x + 1, y)),
+        ]
+        result = [] # Creates an empty list to store valid movements.
+        for action, (nx, ny) in candidates: # Goes through each possible movement.
+            if 0 <= nx < width and 0 <= ny < height and (nx, ny) not in walls: # Is x,y inside the grid, Is there no wall at that position
+                result.append((action, (nx, ny))) # If the movement is valid, add it to the result.
+        return result # Returns all valid neighboring positions.
+
+    # --- BFS: FIFO queue, explores shallowest nodes first, guarantees shortest path ---
+    def bfs_search(self, start_pos, goal_pos, walls, grid_size): # Defines Breadth-First Search
+        walls = set(walls)# Converts walls into a set.
+        frontier = deque([(start_pos, [])]) # Creates the BFS queue.
+        reached = {start_pos} # Stores positions that have already been visited.
+        while frontier: # Continue searching while the queue is not empty.
+            pos, path = frontier.popleft() # Remove the first item from the queue.
+            if pos == goal_pos:
+                return path # If we reached the food, return the path.
+            for action, npos in self.get_neighbors(pos, walls, grid_size): #Find all valid movements from the current position.
+                if npos not in reached: # Check whether we have already visited that position.
+                    reached.add(npos) # Mark it as visited.
+                    frontier.append((npos, path + [action])) # Add the new position and updated path to the queue.
+        return None # If no path exists, return None.
+
+    # --- DFS: LIFO stack, explores deepest nodes first, no optimality guarantee ---
+    def dfs_search(self, start_pos, goal_pos, walls, grid_size):
+        walls = set(walls)
+        frontier = [(start_pos, [])]
+        reached = {start_pos}
+        while frontier:
+            pos, path = frontier.pop()
+            if pos == goal_pos:
+                return path
+            for action, npos in self.get_neighbors(pos, walls, grid_size):
+                if npos not in reached:
+                    reached.add(npos)
+                    frontier.append((npos, path + [action]))
+        return None
+
+    # --- UCS: priority queue ordered by path cost g(n); optimal for weighted/uniform costs ---
+    def ucs_search(self, start_pos, goal_pos, walls, grid_size):
+        walls = set(walls)
+        counter = 0  # tie-breaker so heapq never compares tuples containing positions
+        frontier = [(0, counter, start_pos, [])]
+        reached = {start_pos: 0}
+        while frontier:
+            cost, _, pos, path = heapq.heappop(frontier)
+            if pos == goal_pos:
+                return path
+            if cost > reached.get(pos, float('inf')):
+                continue
+            for action, npos in self.get_neighbors(pos, walls, grid_size):
+                new_cost = cost + 1
+                if npos not in reached or new_cost < reached[npos]:
+                    reached[npos] = new_cost
+                    counter += 1
+                    heapq.heappush(frontier, (new_cost, counter, npos, path + [action]))
+        return None
+
+    # --- bridge: convert an abstract Up/Down/Left/Right path into the environment's
+    # actual turn_left/turn_right/move_forward actuator commands ---
+    def convert_path_to_commands(self, path):
+        commands = []
+        sim_facing = self.facing
+        order_left = ['Right', 'Up', 'Left', 'Down']
+        order_right = ['Right', 'Down', 'Left', 'Up']
+        for direction in path:
+            while sim_facing != direction:
+                if order_left[(order_left.index(sim_facing) + 1) % 4] == direction:
+                    commands.append('turn_left')
+                    sim_facing = order_left[(order_left.index(sim_facing) + 1) % 4]
+                else:
+                    commands.append('turn_right')
+                    sim_facing = order_right[(order_right.index(sim_facing) + 1) % 4]
+            commands.append('move_forward')
+        return commands
+
+    def find_closest_food(self, all_food):
+        if not all_food:
+            return None
+        return min(all_food, key=lambda f: abs(f[0] - self.position[0]) + abs(f[1] - self.position[1]))
+
+    def sense_and_act(self, percept: dict) -> str:
+        self.update_internal_state()
+
+        if not self.plan:
+            target = self.find_closest_food(percept['all_food'])
+            if target is None:
+                action = 'move_forward'
+                self.last_action = action
+                self.previous_percept = percept.copy()
+                return action
+
+            walls = percept['walls']
+            grid_size = percept['grid_size']
+
+            if self.active_algo == 'BFS':
+                path = self.bfs_search(self.position, target, walls, grid_size)
+            elif self.active_algo == 'DFS':
+                path = self.dfs_search(self.position, target, walls, grid_size)
+            else:
+                path = self.ucs_search(self.position, target, walls, grid_size)
+
+            self.plan = self.convert_path_to_commands(path) if path else ['move_forward']
+
+        action = self.plan.pop(0)
+        self.last_action = action
+        self.previous_percept = percept.copy()
+        return action
 
 
 class GreedyGridAgent:
