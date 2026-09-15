@@ -134,7 +134,9 @@ class VisualGridHuntGame:  # manages the environment logic.
             # Lab 03 Step 1.1: expose the world model for search algorithms.
             'grid_size': (self.width, self.height),
             'walls': list(self.walls),
-            'all_food': list(self.food_positions)
+            'all_food': list(self.food_positions),
+            'all_traps': list(self.toxic_traps)   # Lab 05: needed for KB feasibility checks
+
         }
 
     def execute_action(self, action: str): # Actuators

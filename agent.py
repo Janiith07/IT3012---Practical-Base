@@ -3,6 +3,7 @@ import math
 import random
 from collections import deque  # special queue. used here for BFS. BFS needs a FIFO queue.
 import heapq  # Used for UCS. heapq gives us a priority queue, where the lowest-cost item comes first.
+from logic_engine import KnowledgeBase
 
 
 class SearchAgent:
@@ -19,6 +20,17 @@ class SearchAgent:
         self.facing = 'Right' # Stores which direction the agent is facing.
         self.last_action = None # Stores the previous action.
         self.previous_percept = None # Stores the previous information received from the environment.
+
+        # Lab 05: Knowledge Base for logical feasibility checking.
+        self.kb = KnowledgeBase()
+        # Rules exactly as specified in the lab sheet (Step 3.1).
+        self.kb.tell_rule(['TargetVisible', 'HasDust'], 'SafeToEngage')
+        self.kb.tell_rule(['SafeToEngage', 'BloodseekerMissing'], 'Retreat')
+        # Adapted rule grounded in this game's actual hazard (toxic traps) --
+        # this is the rule that genuinely drives feasibility decisions during A*.
+        # Note: TargetVisible/HasDust/BloodseekerMissing use a different game's
+        # vocabulary and are never fed real facts during play -- see written answers.
+        self.kb.tell_rule(['TileIsTrap'], 'Retreat')
 
     # --- internal facing helpers (mirrors the environment's own turn logic) ---
     def turn_left(self): # Defines a function for turning left.
@@ -135,11 +147,10 @@ class SearchAgent:
         x2, y2 = goal
         return math.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2)
 
-    # --- A*: priority queue ordered by f(n) = g(n) + h(n); optimal AND explores far fewer nodes than UCS ---
-    def astar_search(self, start_pos, goal_pos, walls, grid_size, heuristic_type='manhattan'):
-        """A* Search. Uses the heuristic to prioritize nodes that look closer to the goal,
-        drastically reducing the number of explored nodes compared to BFS/UCS."""
+    def astar_search(self, start_pos, goal_pos, walls, grid_size, all_traps=None, heuristic_type='manhattan'):
+        """A* Search with Knowledge-Base feasibility checking (Lab 05 Step 3.2)."""
         walls = set(walls)
+        all_traps = set(all_traps) if all_traps else set()
         heuristic = self.manhattan_distance if heuristic_type == 'manhattan' else self.euclidean_distance
 
         g_start = 0
@@ -156,17 +167,21 @@ class SearchAgent:
                 return path_taken
 
             if current_pos in reached_states and reached_states[current_pos] <= g_cost:
-                continue  # already found an equal-or-better path to this node
+                continue
             reached_states[current_pos] = g_cost
 
             for action, npos in self.get_neighbors(current_pos, walls, grid_size):
+                # Step 3.2: consult the KB -- skip Infeasible tiles even if physically reachable.
+                if not self.is_feasible(npos, all_traps):
+                    continue
+
                 g_new = g_cost + 1
                 if npos not in reached_states or g_new < reached_states[npos]:
                     h_new = heuristic(npos, goal_pos)
                     f_new = g_new + h_new
                     heapq.heappush(frontier, (f_new, g_new, npos, path_taken + [action]))
 
-        return None  # no path exists
+        return None
 
     # --- bridge: convert an abstract Up/Down/Left/Right path into the environment's
     # actual turn_left/turn_right/move_forward actuator commands ---
@@ -221,6 +236,16 @@ class SearchAgent:
         self.previous_percept = percept.copy()
         return action
 
+    def is_feasible(self, pos, all_traps):
+        """Step 3.2: Consults the Knowledge Base before treating a tile as usable.
+        Clears the KB, tells the facts for this specific tile, runs forward chaining,
+        and marks the tile Infeasible (skip it) if 'Retreat' gets deduced -- even if
+        the tile is physically reachable (not a wall)."""
+        self.kb.clear_facts()
+        if pos in all_traps:
+            self.kb.tell_fact('TileIsTrap')
+        self.kb.forward_chain()
+        return 'Retreat' not in self.kb.facts
 
 class GreedyGridAgent:
     """A simple agent that tries to move around systematically to clear the grid."""
